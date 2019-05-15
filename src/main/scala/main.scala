@@ -1,346 +1,58 @@
+import java.io.File
 
-// To prepare the environment of tesseract training
-// docu: https://github.com/tesseract-ocr/tesseract/wiki/Compiling-%E2%80%93-GitInstallation
-// - clone tesseract git: https://github.com/tesseract-ocr/tesseract repo: https://github.com/tesseract-ocr/tesseract.git
-// - install additional library
-//    - sudo apt-get install libicu-dev
-//      sudo apt-get install libpango1.0-dev
-//      sudo apt-get install libcairo2-dev
-// - In the repo's root directory
-//    - ./autogen.sh
-//      ./configure
-//      make
-//      sudo make install
-//      sudo ldconfig
-//      make training
-//      sudo make training-install
-//    - make sure every steps succeed!!!
-// - Prepare
-//    - render image (tif)
-//    - box file (box) : https://github.com/tesseract-ocr/tesseract/issues/2357#issuecomment-477239316
-//        - must be tab at the end of line
-//        - must be a space at end of each word
-//    - unicharset file (unicharset) : http://manpages.ubuntu.com/manpages/bionic/man5/unicharset.5.html https://github.com/tesseract-ocr/langdata_lstm/blob/master/HanS/HanS.unicharset
-//
-//
-//
-//
-// Other material:
-// https://groups.google.com/forum/#!topic/tesseract-ocr/97SzDEE--F0
-// http://manpages.ubuntu.com/manpages/bionic/man5/unicharset.5.html
-//
+import tessTraining.TessTrainedData
+import org.bytedeco.javacpp.BytePointer
+import org.bytedeco.javacpp.lept._
+import org.bytedeco.javacpp.tesseract.TessBaseAPI
 
-//#=== CHECK THAT TESSERACT AND TRAINING TOOLS ARE INSTALLED
-//
-//tesseract -v
-//text2image -v
-//unicharset_extractor -v
-//set_unicharset_properties -v
-//combine_lang_model -v
-//lstmtraining -v
-//lstmeval -v
-//
-//#===  MAKE DIRECTORIES AND DOWNLOAD REQUIRED FILES
-//
-//mkdir -p ~/tessscratch
-//cd ~/tessscratch
-//wget -O lstm.train https://raw.githubusercontent.com/tesseract-ocr/tesseract/master/tessdata/configs/lstm.train
-//wget -O radical-stroke.txt https://raw.githubusercontent.com/tesseract-ocr/langdata_lstm/master/radical-stroke.txt
-//mkdir -p mylangdata
-//  mkdir -p mylangdata/foo
-//
-//#=== CREATE YOUT TRAINING TEXT FOR NEW LANGUAGE foo.
-//  #=== FOR TRAINING FROM SCRATCH, IT SHOULD BE THOSANDS OF LINES.
-//#=== HERE A COPY OF ENGLISH TRAINING TEXT (72 LINES) IS MADE AS AN ILLUSTRATION.
-//
-//wget -O mylangdata/foo/foo.training_text https://raw.githubusercontent.com/tesseract-ocr/langdata/master/eng/eng.training_text
-//
-//#=== MAKE BOX/TIFF PAIRS USING TRAINING TEXT AND TWO FONTS.
-//
-//text2image --strip_unrenderable_words --leading=32 --xsize=3600 --char_spacing=0.0 --exposure=0  --max_pages=0 \
-//  --fonts_dir=/usr/share/fonts \
-//--font="Arial Unicode MS" \
-//  --text=mylangdata/foo/foo.training_text \
-//  --outputbase=foo.Arial.exp0
-//
-//text2image --strip_unrenderable_words --leading=32 --xsize=3600 --char_spacing=0.0 --exposure=0  --max_pages=0 \
-//  --fonts_dir=/usr/share/fonts \
-//--font="Courier New" \
-//  --text=mylangdata/foo/foo.training_text \
-//  --outputbase=foo.Courier.exp0
-//
-//#=== EXTRACT UNICHARSET & SET PROPERTIES FROM BOX FILES.
-//
-//  unicharset_extractor --output_unicharset foo.unicharset --norm_mode 1  foo.Arial.exp0.box  foo.Courier.exp0.box
-//set_unicharset_properties -U foo.unicharset -O foo.unicharset -X foo.xheights --script_dir=.
-//
-//#=== CREATE LSTMF FILES.
-//
-//tesseract foo.Arial.exp0.tif foo.Arial.exp0 --psm 6 lstm.train
-//tesseract foo.Courier.exp0.tif foo.Courier.exp0 --psm 6 lstm.train
-//ls -1 *.lstmf > foo.training_files.txt
-//
-//#=== CREATE STARTER TRAINEDDATA
-//
-//mkdir -p fooscratch
-//
-//combine_lang_model \
-//  --input_unicharset foo.unicharset \
-//  --script_dir . \
-//--output_dir fooscratch \
-//  --lang foo
-//
-//#=== RUN LSTM TRAINING -
-//  #=== hundreds of thousands of iterations may be needed for real training_text.
-//
-//lstmtraining \
-//  --model_output  han-scratch/layer \
-//  --net_spec '[1,36,0,1 Ct3,3,16 Mp3,3 Lfys48 Lfx96 Lrx96 Lfx256 O1c111]' \
-//  --learning_rate 20e-4 \
-//  --traineddata  han-scratch/han/han.traineddata \
-//  --train_listfile  han.training_files.txt   \
-//  --debug_interval 0 \
-//  --max_iterations 5000
-//
-//
-// source http://manpages.ubuntu.com/manpages/bionic/man1/lstmtraining.1.html
-// --max_iterations can be omitted.
-// --target_error_rate 0.01
-/*
-training from scratch.
-This will generate a checkpoint file. The checkpoint file can be
-used for further training, or to generate the final traineddata file which used for ocr.
+import scala.sys.process.Process
 
----------------------- command:
-lstmtraining \
-  --model_output  han-scratch/layer \
-  --net_spec '[1,36,0,1 Ct3,3,16 Mp3,3 Lfys48 Lfx96 Lrx96 Lfx256 O1c111]' \
-  --learning_rate 20e-4 \
-  --traineddata  han-scratch/han/han.traineddata \
-  --train_listfile han.training_files.txt \
-  --eval_listfile han.eval_files.txt \
-  --debug_interval 0 \
-  --max_iterations 500
-*/
+object TessTest {
+  def CreateTrainedDataFromCheckPoint(checkpoint: String, trainedData: String, targetFile: String) = {
+    val command =
+      "lstmtraining --stop_training " +
+      s"--continue_from $checkpoint " +
+      s"--traineddata $trainedData " +
+      s"--model_output $targetFile";
 
-/*
-continue training from checkpoint file.
-This will continue with an existed checkpoint file, e.g. the file which is generated by "training from scratch".
+    println(command)
+    Process(command).!
+  }
 
----------------------- command:
-lstmtraining \
-  --model_output  han-scratch/layer \
-  --continue_from han-scratch/layer_checkpoint \
-  --traineddata  han-scratch/han/han.traineddata \
-  --train_listfile han.training_files.txt \
-  --eval_listfile han.eval_files.txt \
-  --learning_rate 20e-6 \
-  --max_iterations 5000
-*/
+  def tesseractOCR(): Unit = {
+    var outText: BytePointer = new BytePointer
 
-/*
-generate trained data for ocr.
-This will generate traineddata for ocr from a checkpoint file.
-
----------------------- command:
-training/lstmtraining --stop_training \
-  --continue_from han-scratch/layer_checkpoint \
-  --traineddata han-scratch/han/han.traineddata \
-  --model_output han-scratch/han_fontname.traineddata
-*/
-
-import javax.imageio.ImageIO
-import java.awt.{Color, Font, Graphics2D, RenderingHints}
-import java.awt.image.BufferedImage
-import java.io.{File, FileWriter, PrintWriter}
-
-import scala.collection.mutable.ArrayBuffer
-import scala.io.Source
-import scala.util.Random
-
-case class Rect(left: Int, bottom: Int, right: Int, top: Int, text: String)
-
-object DrawTextOnImage {
-  def apply(text: String, characterPerLine: Int, font: Font): (BufferedImage, Array[Rect]) = {
-    val lines = text.replaceAll("\\s", "")
-      .filter(c => !c.isSurrogate)
-      .grouped(characterPerLine - 1).map(line => line + "\t").toArray
-
-    val extendedLines = text.replaceAll("\\s", "")
-      .filter(c => c.isSurrogate)
-      .grouped((characterPerLine - 1)*2).map(line => line + "\t").toArray
-
-    val fontSize = font.getSize
-    val width = characterPerLine * fontSize + 20
-    val height = lines.length * fontSize + 20
-
-    val bufferedImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-    val graphics = bufferedImage.getGraphics.asInstanceOf[Graphics2D]
-
-    graphics.setColor(Color.WHITE)
-    graphics.fillRect(0, 0, width, height)
-
-    graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
-    graphics.setColor(Color.BLACK)
-    graphics.setFont(font)
-
-    for ((key, idx) <- lines.zipWithIndex)
-      graphics.drawString(key, 10, (idx + 1) * fontSize + 10)
-
-    // top: 10 + row * fontSize + 3
-    // bottom: 10 + row * fontSize + fontSize + 3
-    // left: 10 + col * fontSize /// 10
-    // right: 10 + col * fontSize + fontSize /// 10 + lines(row).size * fontSize
-
-    def characterPos(row: Int, col: Int): Rect = {
-      Rect(10 + col * fontSize, 10 + row * fontSize + fontSize + 3, 10 + col * fontSize + fontSize, 10 + row * fontSize + 3, lines(row)(col).toString)
+    val api = new TessBaseAPI()
+    // Initialize tesseract-ocr with English, without specifying tessdata path
+    if (api.Init("/home/tess/tess-trained/", "chi_sim") != 0) {
+      System.err.println("Could not initialize tesseract.")
+      System.exit(1)
     }
 
-    def linePos(row: Int, col: Int): Rect = {
-      Rect(10, 10 + row * fontSize + fontSize + 3, 10 + lines(row).length * fontSize, 10 + row * fontSize + 3, lines(row)(col).toString)
-    }
+    // Open input image with leptonica library
 
-    // each character
-    val coord = new ArrayBuffer[Rect]()
-    for (row <- lines.indices)
-      for (col <- lines(row).indices)
-        coord.append(linePos(row, col))
+    val image = pixRead("/usr/src/tesseract/testing/phototest.tif")
+    api.SetImage(image)
+    // Get OCR result
+    outText = api.GetUTF8Text
+    System.out.println("OCR output:\n" + outText.getString)
 
-    // border
-//    graphics.setColor(Color.GREEN)
-//    for (rect <- coord)
-//      graphics.drawRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top)
-
-    (bufferedImage, coord.map(v => Rect(v.left, height - v.bottom, v.right, height - v.top, v.text)).toArray)
-  }
-}
-
-class TessTrainedData(val directory: String, val lang: String, val font: String, val radical_stroke: String, val config: String) {
-  private def directoryCheck(): Boolean = {
-    if (directory.length == 0)
-      return false
-
-    val f = new File(directory)
-    f.list().length == 0
-  }
-
-  require(directoryCheck(), "directory must be empty!")
-
-  import sys.process._
-
-  def duplicateContentRandom(factor: Int, content: String) = {
-    val buff = content.replaceAll("\\s", "").toBuffer
-
-    (0 until factor).map(v => Random.shuffle(buff).mkString).foldLeft(Vector.empty[String])(_ :+ _)
-  }
-
-  def prepareStage0(textFilePath: String): Unit = {
-    val file = Source.fromFile(textFilePath)
-    val content = file.getLines().toArray.flatten.mkString
-    file.close()
-
-    val stagePath = s"$directory/stage0/"
-    if (!new File(stagePath).exists())
-      Process(s"mkdir $stagePath").!
-
-    val duplicated = duplicateContentRandom(50, content)
-
-    for ((content, idx) <- duplicated.zipWithIndex) {
-      val (image, box) = DrawTextOnImage(content, 25, new Font("SimHei", Font.PLAIN, 30))
-      val tifPath = stagePath + s"$lang.$font.exp$idx.tif"
-      ImageIO.write(image, "tif", new File(tifPath))
-
-      val boxPath = stagePath + s"$lang.$font.exp$idx.box"
-      val output = new PrintWriter(new File(boxPath))
-      for (line <- box) {
-        output.write(line.text + " " + line.left + " " + line.bottom + " " + line.right + " " + line.top + " " + 0 + "\n")
-        if (line.text != "\t")
-          output.write("  " + line.left + " " + line.bottom + " " + line.right + " " + line.top + " " + 0 + "\n") // space at the end of each word
-      }
-      output.flush()
-      output.close()
-
-      tifPaths = tifPaths :+ tifPath
-      boxPaths = boxPaths :+ boxPath
-    }
+    // Destroy used object and release memory
+    api.End()
+    outText.deallocate()
 
   }
-
-  private var tifPaths: Vector[String] = Vector.empty
-  private var boxPaths: Vector[String] = Vector.empty
-
-  def prepareStage1(): Unit = {
-    val stagePath = s"$directory/stage0/"
-    if (!new File(stagePath).exists())
-      Process(s"mkdir $stagePath").!
-
-    unicharsetPath = stagePath + s"$lang.unicharset"
-    val boxsPath = boxPaths.mkString(" ")
-    Process(s"unicharset_extractor --output_unicharset $unicharsetPath --norm_mode 1 $boxsPath").!
-
-    xheightsPath = stagePath + s"$lang.xheights"
-    Process(s"set_unicharset_properties -U $unicharsetPath -O $unicharsetPath -X $xheightsPath --script_dir=.").!
-  }
-
-  private var unicharsetPath: String = ""
-  private var xheightsPath: String = ""
-
-  def prepareStage2(): Unit = {
-    val stagePath = s"$directory/stage0/"
-    if (!new File(stagePath).exists())
-      Process(s"mkdir $stagePath").!
-
-    for ((tifPath, boxPath) <- tifPaths.zip(boxPaths)) {
-      val command = s"tesseract $tifPath $boxPath --psm 6 lstm.train"
-      Process(command).!
-    }
-
-    val lstmfFiles = new File(stagePath).listFiles(_.getName.endsWith(".lstmf")).map(_.getName)
-    val (train, eval) = lstmfFiles.splitAt((lstmfFiles.length * 0.8).toInt)
-
-    var writer = new FileWriter(new File(s"$stagePath$lang.training_files.txt"))
-    writer.write(train.mkString("\n"))
-    writer.close()
-
-    writer = new FileWriter(new File(s"$stagePath$lang.eval_files.txt"))
-    writer.write(eval.mkString("\n"))
-    writer.close()
-  }
-
-  def CreateTrainedData(): Unit = {
-    val stagePath = s"$directory/stage0/"
-
-    val targetPath = s"$stagePath$lang-scratch"
-    if (!new File(targetPath).exists() )
-      Process(s"mkdir $targetPath").!
-
-    val configPath = s"$stagePath/$lang/"
-    if (!new File(configPath).exists())
-      Process(s"mkdir $configPath").!
-    Process(s"cp $config $lang.config", new File(configPath)).!
-
-    Process(s"cp $radical_stroke radical-stroke.txt", new File(stagePath)).!
-
-    Process(s"combine_lang_model --input_unicharset $unicharsetPath --script_dir . --output_dir $lang-scratch --lang $lang",
-      new File(stagePath)).!
-  }
-
 }
 
 object Main {
   def main(args: Array[String]): Unit = {
-    val tess = new TessTrainedData(
-      "/home/yifei/tess-yifei",
-      "han",
-      "simhei",
-      // source : https://github.com/tesseract-ocr/langdata/blob/master/radical-stroke.txt
-      "/home/yifei/tess-data/radical-stroke.txt",
-      // source : https://github.com/tesseract-ocr/langdata/tree/master/chi_sim
-      "/home/yifei/tess-data/chi_sim.config")
+    // TessTrainedData.Example()
+//    TessTest.CreateTrainedDataFromCheckPoint(
+//      "/home/tess/tess-test/stage0/han-scratch/layer6.416_225118.checkpoint",
+//      "/home/tess/tess-test/stage0/han-scratch/han/han.traineddata",
+//      "/home/tess/tess-trained/chi_simhei.traineddata"
+//    )
 
-    tess.prepareStage0("/home/yifei/repo/tesseract-train/first.txt")
-    tess.prepareStage1()
-    tess.prepareStage2()
-    tess.CreateTrainedData()
+    TessTest.tesseractOCR()
   }
 }
