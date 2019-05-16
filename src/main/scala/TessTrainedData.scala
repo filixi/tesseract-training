@@ -339,9 +339,9 @@ class TessTrainedData(val directory: String, val lang: String, val font: String,
 }
 
 object TessTrainedData {
-  def Example() = {
+  def default(prepareTo: String) = {
     val tess = new TessTrainedData(
-      "/home/tess/tess-second",
+      s"/home/tess/$prepareTo",
       "han",
       "simhei",
       // source : https://github.com/tesseract-ocr/langdata/blob/master/radical-stroke.txt
